@@ -1,65 +1,83 @@
-services:
+version: "3.8"
 
+services:
   espocrm-db:
     image: mariadb:latest
-    container_name: espocrm-db
+    restart: always
     environment:
-      MARIADB_ROOT_PASSWORD: root_password
+      MARIADB_ROOT_PASSWORD: root_password          # verander dit in productie!
       MARIADB_DATABASE: espocrm
       MARIADB_USER: espocrm
-      MARIADB_PASSWORD: database_password
+      MARIADB_PASSWORD: database_password           # verander dit in productie!
     volumes:
       - espocrm-db:/var/lib/mysql
-    restart: always
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 20s
-      start_period: 10s
       timeout: 10s
       retries: 3
+      start_period: 10s
 
   espocrm:
-    image: espocrm/espocrm
-    container_name: espocrm
+    image: espocrm/espocrm:latest
+    restart: always
     environment:
       ESPOCRM_DATABASE_PLATFORM: Mysql
       ESPOCRM_DATABASE_HOST: espocrm-db
       ESPOCRM_DATABASE_USER: espocrm
       ESPOCRM_DATABASE_PASSWORD: database_password
       ESPOCRM_ADMIN_USERNAME: admin
-      ESPOCRM_ADMIN_PASSWORD: password
-      ESPOCRM_SITE_URL: "http://localhost:8080"
+      ESPOCRM_ADMIN_PASSWORD: admin_password       # verander dit meteen na installatie
+      # LET OP: Coolify vult deze automatisch met je domein als je het project deployt
+      # Daarom laten we SITE_URL leeg of zetten we een placeholder
+      ESPOCRM_SITE_URL: "https://{{your-domain}}"
     volumes:
       - espocrm:/var/www/html
-    restart: always
     depends_on:
       espocrm-db:
         condition: service_healthy
-    ports:
-      - 8080:80
+    # Coolify + Traefik: gebruik expose i.p.v. ports als je een domein koppelt
+    expose:
+      - "80"
+    # Als je geen domein gebruikt en lokaal test, kun je tijdelijk ports gebruiken:
+    # ports:
+    #   - "8080:80"
+    labels:
+      # Deze labels zorgen ervoor dat Coolify/Traefik de container als web-app ziet
+      - "coolify.http.port=80"
+      - "coolify.http.protocol=http"
+      # Optioneel: forceer HTTPS als je een domein met SSL hebt
+      # - "traefik.http.routers.espocrm.tls=true"
+      # - "traefik.http.routers.espocrm.tls.certresolver=letsencrypt"
 
   espocrm-daemon:
-    image: espocrm/espocrm
-    container_name: espocrm-daemon
-    volumes:
-      - espocrm:/var/www/html
+    image: espocrm/espocrm:latest
     restart: always
     entrypoint: docker-daemon.sh
-
-  espocrm-websocket:
-    image: espocrm/espocrm
-    container_name: espocrm-websocket
-    environment:
-      ESPOCRM_CONFIG_USE_WEB_SOCKET: "true"
-      ESPOCRM_CONFIG_WEB_SOCKET_URL: "ws://localhost:8081"
-      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBSCRIBER_DSN: "tcp://*:7777"
-      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBMISSION_DSN: "tcp://espocrm-websocket:7777"
     volumes:
       - espocrm:/var/www/html
+    depends_on:
+      - espocrm
+
+  espocrm-websocket:
+    image: espocrm/espocrm:latest
     restart: always
+    environment:
+      ESPOCRM_CONFIG_USE_WEB_SOCKET: "true"
+      # Coolify exposeert deze poort niet automatisch naar buiten tenzij je hem opgeeft
+      ESPOCRM_CONFIG_WEB_SOCKET_URL: "wss://{{your-domain}}/ws"   # wss als je SSL hebt
+      # Alternatief als je geen domein hebt: ws://<coolify-ip>:8081
+      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBSCRIBER_DSN: "tcp://*:7777"
+      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBMISSION_DSN: "tcp://espocrm-websocket:7777"
     entrypoint: docker-websocket.sh
-    ports:
-      - 8081:8080
+    volumes:
+      - espocrm:/var/www/html
+    expose:
+      - "8080"        # websocket luistert op 8080 in de container
+    ports:            # alleen nodig als je de websocket direct van buitenaf wilt bereiken
+      - "8081:8080"   # kun je later verwijderen als je via Traefik een /ws route maakt
+    depends_on:
+      - espocrm
 
 volumes:
   espocrm-db:
